@@ -33,8 +33,8 @@ while True:
 
     try:
         x_str, y_str = line.split(",")
-        x = float(x_str)
-        y = float(y_str)
+        x = -float(x_str)
+        y = -float(y_str)
 
         point.set_data([x], [y])
         fig.canvas.draw_idle()
