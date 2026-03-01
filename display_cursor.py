@@ -7,7 +7,7 @@ matplotlib.use("TkAgg")
 
 import matplotlib.pyplot as plt
 
-PORT = "/dev/tty.usbmodem487F30FE67E91"
+PORT = "/dev/cu.usbmodem487F303F49801"
 BAUD = 115200
 
 ser = serial.Serial(PORT, BAUD, timeout=0.1)
@@ -32,9 +32,9 @@ while True:
         continue
 
     try:
-        x_str, y_str = line.split(",")
-        x = float(x_str)
-        y = float(y_str)
+        x_str, y_str, color = line.split(",")
+        x = -float(x_str)
+        y = -float(y_str)
 
         point.set_data([x], [y])
         fig.canvas.draw_idle()

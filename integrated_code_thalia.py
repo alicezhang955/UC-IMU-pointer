@@ -20,7 +20,7 @@ ahrs_hz = 100
 ahrs = mahony.Mahony(ahrs_hz, 5, 100)
 time_between_ahrs_updates = int(1e9 / ahrs_hz)
 # data printing (streaming) rate; every 0.01 second
-time_between_prints = 0.01 
+time_between_prints = 0.1
 # smoothing
 alpha = 0.5
 last_ahrs_update_time = time.monotonic_ns()
