@@ -4,12 +4,13 @@ import serial
 import matplotlib.pyplot as plt
 
 # config 
-port = "/dev/cu.usbmodem487F303F49801" # note to user: replace this with your port if it doesn't work
+port = "/dev/cu.usbmodem487F303F49801" # note to other users: replace this with your port name! 
 baud_rate = 115200
 # maximum number of points that can be drawn 
 max_points = 35000
-velocity = 0.1
-refresh_rate = 1/10
+refresh_rate = 1/10 
+# constant for smoothing
+alpha = 0.3 
 
 def main():
     feather = serial.Serial(port, baud_rate, timeout=0.1)
@@ -48,7 +49,6 @@ def main():
                     converted_x = 0.0 
                     converted_y = 0.0
                     is_recording = True
-                    last_time = time.time()
                     continue
                 if decoded_data == "Stop":
                     is_recording = False
@@ -59,14 +59,13 @@ def main():
                 for part in decoded_data.split(","):
                     data_parts.append(part.strip())
                 if len(data_parts) >= 2:
-                    # x and y coordinates 
+                    # x and y coordinates; adjust signs
                     x = -float(data_parts[0])
                     y = -float(data_parts[1])
                     if len(data_parts) == 3:
                         selected_color = data_parts[2]
                         current_color = selected_color
                         line.set_color(current_color)  
-                    alpha = 0.3
                     converted_x = alpha * x + (1 - alpha) * converted_x
                     converted_y = alpha * y + (1 - alpha) * converted_y
                     x_coordinates.append(converted_x)
@@ -81,7 +80,7 @@ def main():
                 fig.canvas.flush_events()
     # save image via Ctrl + C
     except KeyboardInterrupt:
-        filename = f"drawing_{int(time.time())}.png"
+        filename = f"drawing_{time.strftime('%Y-%m-%d_%H-%M-%S')}.png"
         ax.axis("off")
         fig.savefig(filename, dpi=300, bbox_inches="tight", pad_inches=0)
         print("Drawing saved!", filename)

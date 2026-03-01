@@ -1,0 +1,194 @@
+# code.py — ESP32-S2 Feather + LSM9DS1 (I2C) + Mahony AHRS
+#
+# Requirements (CircuitPython):
+#   - adafruit_lsm9ds1.mpy in /lib
+#   - mahony.py in /lib (your Mahony implementation that exposes Mahony.update and yaw/pitch/roll/q0..q3)
+#
+# Wiring:
+#   - Use Feather's STEMMA QT connector (recommended) -> board.STEMMA_I2C()
+#   - Or use main SDA/SCL pins -> board.I2C()
+#
+# Notes:
+#   - MAG_MIN/MAG_MAX and gyro biases are device + environment specific.
+#   - Sign flips (gz, my) depend on how your sensor is mounted.
+
+import time
+import board
+import adafruit_icm20x
+import mahony
+import ulab.numpy as np 
+import math
+
+# ----------------------------
+# YOUR CALIBRATION VALUES
+# ----------------------------
+MAG_MIN = [-0.5764, 0.0097, -0.5362]
+MAG_MAX = [0.4725, 0.9919, 0.4743]
+
+# ----------------------------
+# TUNING
+# ----------------------------
+AHRS_HZ = 100                 # target update rate
+PRINT_EVERY_SEC = 0.01         # print at 10 Hz
+NS_PER_UPDATE = int(1e9 / AHRS_HZ) 
+
+# Mahony gains (these match your constructor usage: Mahony(sample_hz, kp, ki) in your snippet)
+# If your mahony.py signature differs, adjust accordingly.
+ahrs = mahony.Mahony(AHRS_HZ, 5, 100)
+
+q = np.array([1, 0, 0, 0])
+
+alpha = 0.5
+x = 0
+y = 0
+
+# ----------------------------
+# Helpers
+# ----------------------------
+def map_range(x, in_min, in_max, out_min, out_max):
+    # Map x from [in_min,in_max] to [out_min,out_max] with clamping
+    mapped = (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
+    if out_min <= out_max:
+        if mapped < out_min:
+            return out_min
+        if mapped > out_max:
+            return out_max
+        return mapped
+    else:
+        if mapped < out_max:
+            return out_max
+        if mapped > out_min:
+            return out_min
+        return mapped
+
+def rotate_to_world(q, forward):
+    w, x, y, z = q[0], q[1], q[2], q[3]
+    vx, vy, vz = forward[0], forward[1], forward[2]
+
+    # t = 2 * (q_vec x v)
+    tx = 2.0 * (y*vz - z*vy)
+    ty = 2.0 * (z*vx - x*vz)
+    tz = 2.0 * (x*vy - y*vx)
+
+    # v' = v + w*t + (q_vec x t)
+    vpx = vx + w*tx + (y*tz - z*ty)
+    vpy = vy + w*ty + (z*tx - x*tz)
+    vpz = vz + w*tz + (x*ty - y*tx)
+
+    return np.array([vpx, vpy, vpz])
+
+# ----------------------------
+# I2C + Sensor Init (ESP32-S2 Feather)
+# ----------------------------
+# Preferred on Adafruit boards with QT connector:
+i2c = board.I2C()  # uses board.SCL and board.SDA
+# i2c = board.STEMMA_I2C()  # For using the built-in STEMMA QT connector on a microcontroller
+
+
+# Some boards need a moment for I2C to come up
+time.sleep(0.2)
+
+sensor = adafruit_icm20x.ICM20948(i2c)
+
+# ----------------------------
+# Timing
+# ----------------------------
+last_print = time.monotonic()
+last_ns = time.monotonic_ns()
+
+print("Hold device still for calibration...")
+
+sum_yaw = 0
+sum_pitch = 0
+sum_roll = 0
+n = 0
+count = 0
+t0 = time.monotonic()
+sum_sin = 0
+sum_cos = 0
+
+time.sleep(2)
+
+while time.monotonic() - t0 < 5.0:
+    mx, my, mz = sensor.magnetic
+    gx, gy, gz = sensor.gyro
+    ax, ay, az = sensor.acceleration
+
+    # --- Hard-iron mag calibration (simple min/max mapping to [-1,1]) ---
+    mx = map_range(mx, MAG_MIN[0], MAG_MAX[0], -1.0, 1.0)
+    my = map_range(my, MAG_MIN[1], MAG_MAX[1], -1.0, 1.0)
+    mz = map_range(mz, MAG_MIN[2], MAG_MAX[2], -1.0, 1.0)
+
+    # --- Mounting/sign adjustments ---
+    # Your snippet: ahrs_filter.update(gx, gy, -gz, ax, ay, az, mx, -my, mz)
+    # Keep that behavior here, but make it explicit.
+    gz_use = -gz
+    my_use = -my 
+
+    # --- Update Mahony ---
+    ahrs.update(gx, gy, gz_use, ax, ay, az, mx, my_use, mz)
+
+    sum_yaw += ahrs.yaw
+    sum_pitch += ahrs.pitch
+    sum_roll += ahrs.roll
+    sum_sin += math.sin(ahrs.yaw)
+    sum_cos += math.cos(ahrs.yaw)
+    n += 1
+    # print(ahrs.yaw) 
+    time.sleep(0.1)
+
+yaw0 = math.atan2(sum_sin, sum_cos)
+pitch0 = sum_pitch / n
+roll0 = sum_roll / n
+
+print("Calibration complete.")
+print(yaw0 * 57.29578, pitch0 * 57.29578, roll0 * 57.29578)
+ 
+f_world = rotate_to_world(q, [1, 0, 0])
+fx, fy, fz = f_world
+
+while True:
+    now_ns = time.monotonic_ns()
+    if (now_ns - last_ns) >= NS_PER_UPDATE:
+        last_ns = now_ns 
+
+        # --- Read sensors ---
+        mx, my, mz = sensor.magnetic
+        gx, gy, gz = sensor.gyro
+        ax, ay, az = sensor.acceleration
+
+        # --- Hard-iron mag calibration (simple min/max mapping to [-1,1]) ---
+        mx = map_range(mx, MAG_MIN[0], MAG_MAX[0], -1.0, 1.0)
+        my = map_range(my, MAG_MIN[1], MAG_MAX[1], -1.0, 1.0)
+        mz = map_range(mz, MAG_MIN[2], MAG_MAX[2], -1.0, 1.0)
+
+        # --- Mounting/sign adjustments ---
+        # Your snippet: ahrs_filter.update(gx, gy, -gz, ax, ay, az, mx, -my, mz)
+        # Keep that behavior here, but make it explicit.
+        gz_use = -gz
+        my_use = -my 
+
+        # --- Update Mahony ---
+        ahrs.update(gx, gy, gz_use, ax, ay, az, mx, my_use, mz)
+
+    # Print 
+    now_s = time.monotonic()
+    if now_s - last_print >= PRINT_EVERY_SEC:
+        last_print = now_s
+
+        # Convert radians to degrees for display 
+        yaw_deg = ahrs.yaw * 57.29578
+        if yaw_deg < 0:
+            yaw_deg += 360.0 
+ 
+        x_prev = x
+        y_prev = y
+ 
+        y = (ahrs.pitch - pitch0) * -57.29578
+        x = (ahrs.roll - roll0) * 57.29578
+        x = x + alpha * (x_prev - x)
+        y = y + alpha * (y_prev - y)
+        # print("Orientation:", yaw_deg, ",", ahrs.pitch * 57.29578, ",", ahrs.roll * 57.29578)
+        # print("Orientation - bias:", yaw_deg - yaw0 * 57.29578, ",", (ahrs.pitch - pitch0) * 57.29578, ",", (ahrs.roll - roll0) * 57.29578)
+        print(f"{x:.4f},{y:.4f}")
+        # print("Quaternion:", ahrs.q0, ",", ahrs.q1, ",", ahrs.q2, ",", ahrs.q3)
