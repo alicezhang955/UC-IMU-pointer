@@ -8,8 +8,8 @@ port = "/dev/cu.usbmodem487F303F49801" # note to user: replace this with your po
 baud_rate = 115200
 # maximum number of points that can be drawn 
 max_points = 35000
-velocity = 3
-refresh_rate = 1/30
+velocity = 0.1
+refresh_rate = 1/10
 
 def main():
     feather = serial.Serial(port, baud_rate, timeout=0.1)
@@ -20,7 +20,6 @@ def main():
     # current position in the canvas 
     converted_x = 0.0
     converted_y = 0.0
-    last_time = time.time()
     next_plot = time.time()
     is_recording = False
     # plot setup 
@@ -61,17 +60,15 @@ def main():
                     data_parts.append(part.strip())
                 if len(data_parts) >= 2:
                     # x and y coordinates 
-                    x = float(data_parts[0])
-                    y = float(data_parts[1])
+                    x = -float(data_parts[0])
+                    y = -float(data_parts[1])
                     if len(data_parts) == 3:
                         selected_color = data_parts[2]
                         current_color = selected_color
                         line.set_color(current_color)  
-                    now = time.time()
-                    time_since_last_update = now - last_time
-                    last_time = now
-                    converted_x += (x * velocity) * time_since_last_update
-                    converted_y += (y * velocity) * time_since_last_update
+                    alpha = 0.3
+                    converted_x = alpha * x + (1 - alpha) * converted_x
+                    converted_y = alpha * y + (1 - alpha) * converted_y
                     x_coordinates.append(converted_x)
                     y_coordinates.append(converted_y)
             if time.time() >= next_plot:
